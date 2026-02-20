@@ -333,7 +333,7 @@ a{color:var(--blue)}
 </div>
 <p style="font-size:11px;color:var(--dim);margin:0 0 10px;line-height:1.5">Anki-style spaced repetition. Cards you miss come back sooner; cards you know space out over days.</p>
 <div id="srs-stats" style="font-size:9px;color:var(--dim);margin-bottom:10px;line-height:1.8"></div>
-<button class="btn btn-amber" onclick="startSrsTower()" style="width:100%;font-size:10px">Start Daily Review</button>
+<button class="btn btn-amber" id="srs-start-btn" onclick="startSrsTower()" style="width:100%;font-size:10px">Start Daily Review</button>
 </div>
 
 <p class="gf" style="font-size:9px;color:var(--dim);margin-bottom:8px">Speed Rounds</p>
@@ -1689,7 +1689,7 @@ function getSrsStats(pool) {
 }
 
 // ==================== SPELL TOWER ====================
-let towerState = { questions: [], index: 0, score: 0, lives: 3, streak: 0, timer: 0, maxTime: 15, interval: null, difficulty: 'easy', totalCorrect: 0, totalAsked: 0, learnedOnly: false, waitingForSpace: false, retryAnswers: null, srsMode: false, srsQueue: [], srsSessionCorrect: 0, srsSessionWrong: 0, srsSessionNew: 0 };
+let towerState = { questions: [], index: 0, score: 0, lives: 3, streak: 0, timer: 0, maxTime: 15, interval: null, difficulty: 'easy', totalCorrect: 0, totalAsked: 0, learnedOnly: false, waitingForSpace: false, retryAnswers: null, srsMode: false, srsWeaknessMode: false, srsQueue: [], srsSessionCorrect: 0, srsSessionWrong: 0, srsSessionNew: 0 };
 
 function toggleTowerFilter() {
   towerState.learnedOnly = !towerState.learnedOnly;
@@ -1716,11 +1716,25 @@ function updateTowerSpellCount() {
   const statsEl = document.getElementById('srs-stats');
   if (badge) {
     const actionable = stats.dueCount + Math.min(stats.newCount, SRS_NEW_PER_SESSION);
-    badge.textContent = actionable > 0 ? `${actionable} cards ready` : 'all caught up!';
-    badge.style.color = actionable > 0 ? 'var(--amber)' : 'var(--green)';
+    const reviewed = pool.filter(s => state.srs[s.id] && state.srs[s.id].box > 0).length;
+    if (actionable > 0) {
+      badge.textContent = `${actionable} cards ready`;
+      badge.style.color = 'var(--amber)';
+    } else if (reviewed > 0) {
+      badge.textContent = `${reviewed} cards for extra practice`;
+      badge.style.color = 'var(--teal)';
+    } else {
+      badge.textContent = 'learn spells in the Dojo!';
+      badge.style.color = 'var(--dim)';
+    }
   }
   if (statsEl) {
     statsEl.innerHTML = `Due: <span style="color:var(--amber)">${stats.dueCount}</span> · New: <span style="color:var(--teal)">${stats.newCount}</span> · Learning: <span style="color:var(--blue)">${stats.learnCount}</span> · Mature: <span style="color:var(--green)">${stats.matureCount}</span>`;
+  }
+  const startBtn = document.getElementById('srs-start-btn');
+  if (startBtn) {
+    const actionable = stats.dueCount + Math.min(stats.newCount, SRS_NEW_PER_SESSION);
+    startBtn.textContent = actionable > 0 ? 'Start Daily Review' : 'Practice Weak Spells';
   }
 }
 
@@ -1765,13 +1779,35 @@ function startTower(difficulty) {
   nextTowerQuestion();
 }
 
+function buildWeaknessQueue(pool) {
+  const reviewed = pool.filter(spell => {
+    const card = state.srs[spell.id];
+    return card && card.box > 0;
+  });
+  if (reviewed.length === 0) return [];
+  const now = Date.now();
+  reviewed.sort((a, b) => {
+    const ca = state.srs[a.id], cb = state.srs[b.id];
+    if (cb.lapses !== ca.lapses) return cb.lapses - ca.lapses;
+    if (ca.box !== cb.box) return ca.box - cb.box;
+    return (ca.due - now) - (cb.due - now);
+  });
+  return reviewed;
+}
+
 function startSrsTower() {
   const pool = towerState.learnedOnly ? SPELLS.filter(s => state.learnedSpells.includes(s.id)) : SPELLS;
   const srsSpells = buildSrsQueue(pool);
-  if (srsSpells.length === 0) { alert('No cards due for review! Come back later or add new spells.'); return; }
-  // Build questions from SRS queue
+  let isWeaknessMode = false;
+  let weaknessSpells = srsSpells;
+  if (srsSpells.length === 0) {
+    weaknessSpells = buildWeaknessQueue(pool);
+    if (weaknessSpells.length === 0) { alert('No cards to review yet! Learn some spells in the Dojo first.'); return; }
+    isWeaknessMode = true;
+  }
+  // Build questions from SRS queue (or weakness queue)
   const qs = [];
-  srsSpells.forEach(spell => {
+  weaknessSpells.forEach(spell => {
     // Pick drill or fill-in-blank randomly
     const fb = makeFillBlank(spell);
     if (fb && Math.random() > 0.4) {
@@ -1786,10 +1822,11 @@ function startSrsTower() {
     }
   });
   towerState.srsMode = true;
+  towerState.srsWeaknessMode = isWeaknessMode;
   towerState.srsQueue = []; // for re-queuing wrong answers
   towerState.srsSessionCorrect = 0;
   towerState.srsSessionWrong = 0;
-  towerState.srsSessionNew = srsSpells.filter(s => !state.srs[s.id] || state.srs[s.id].box === 0).length;
+  towerState.srsSessionNew = isWeaknessMode ? 0 : weaknessSpells.filter(s => !state.srs[s.id] || state.srs[s.id].box === 0).length;
   towerState.difficulty = 'free';
   towerState.maxTime = 0;
   towerState.questions = qs;
@@ -1938,14 +1975,18 @@ function endTower() {
   if (towerState.srsMode) {
     const pool = towerState.learnedOnly ? SPELLS.filter(s => state.learnedSpells.includes(s.id)) : SPELLS;
     const stats = getSrsStats(pool);
-    document.getElementById('tower-final-score').textContent = 'Review Complete!';
+    const wasWeakness = towerState.srsWeaknessMode;
+    document.getElementById('tower-final-score').textContent = wasWeakness ? 'Extra Practice Complete!' : 'Review Complete!';
     document.getElementById('tower-final-stats').innerHTML =
       `<span class="text-green">Correct: ${towerState.srsSessionCorrect}</span><br>` +
       `<span class="text-red">Missed (re-queued): ${towerState.srsSessionWrong}</span><br>` +
-      `<span class="text-teal">New cards learned: ${towerState.srsSessionNew}</span><br>` +
+      (wasWeakness ? '' : `<span class="text-teal">New cards learned: ${towerState.srsSessionNew}</span><br>`) +
       `<hr style="border-color:var(--border);margin:10px 0">` +
-      `<span style="color:var(--dim);font-size:9px">Next session: <span class="text-amber">${stats.dueCount}</span> due · <span class="text-teal">${stats.newCount}</span> new · <span class="text-green">${stats.learnCount + stats.matureCount}</span> learned</span>`;
+      (wasWeakness
+        ? `<span style="color:var(--dim);font-size:9px">Cards were sorted weakest → strongest based on your miss history.</span>`
+        : `<span style="color:var(--dim);font-size:9px">Next session: <span class="text-amber">${stats.dueCount}</span> due · <span class="text-teal">${stats.newCount}</span> new · <span class="text-green">${stats.learnCount + stats.matureCount}</span> learned</span>`);
     towerState.srsMode = false;
+    towerState.srsWeaknessMode = false;
   } else {
     document.getElementById('tower-final-score').textContent = towerState.score + ' pts';
     document.getElementById('tower-final-stats').innerHTML = `<span class="text-green">Correct: ${towerState.totalCorrect}/${towerState.totalAsked}</span><br><span class="text-amber">Streak best: ${towerState.streak}</span><br><span class="text-purple">High Score: ${state.towerHighScore}</span>`;
