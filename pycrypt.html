@@ -1466,7 +1466,16 @@ function makeFillBlank(spell) {
     const hintedLines = blankedLines.map(line => {
       if (!hintAdded && line.includes('_____')) {
         hintAdded = true;
-        if (!line.includes('#')) return line + '  # ' + hintText;
+        const commentIdx = line.indexOf('#');
+        if (commentIdx === -1) {
+          return line + '  # ' + hintText;
+        } else {
+          const existing = line.substring(commentIdx + 1).trim();
+          const hasDescriptiveWords = existing.replace(/\b(True|False|None|sqrt|nan|inf|NaN|Inf)\b/g, '').match(/[a-zA-Z]{2,}/);
+          if (!hasDescriptiveWords) {
+            return line.substring(0, commentIdx) + '# ' + hintText;
+          }
+        }
       }
       return line;
     });
