@@ -1,4 +1,4 @@
-const CACHE_NAME = 'pycrypt-v2';
+const CACHE_NAME = 'pycrypt-v3';
 const ASSETS = [
   './pycrypt.html',
   './manifest.json',

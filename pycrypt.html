@@ -1460,7 +1460,17 @@ function makeFillBlank(spell) {
       const firstSentence = spell.desc.split(/\.\s/)[0].replace(/\.$/, '');
       return { descPrompt: firstSentence, answers, isDesc: true };
     }
-    const code = blankedLines.join('\n').replace(/</g, '&lt;');
+    // Add a short hint comment to the first blanked line so the user knows what to fill in
+    const hintText = spell.desc.split(/\.\s/)[0].replace(/\.$/, '');
+    let hintAdded = false;
+    const hintedLines = blankedLines.map(line => {
+      if (!hintAdded && line.includes('_____')) {
+        hintAdded = true;
+        if (!line.includes('#')) return line + '  # ' + hintText;
+      }
+      return line;
+    });
+    const code = hintedLines.join('\n').replace(/</g, '&lt;');
     return { code, answers };
   }
   return null;
